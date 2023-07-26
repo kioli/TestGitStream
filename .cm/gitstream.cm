@@ -1,6 +1,3 @@
-# -*- mode: yaml -*-
-# This example configuration for provides basic automations to get started with gitStream.
-# View the gitStream quickstart for more examples: https://docs.gitstream.cm/quick-start/
 manifest:
   version: 1.0
 automations:
@@ -10,10 +7,10 @@ automations:
       - true
     run:
       - action: add-label@v1
-      # etr is defined in the last section of this example
         args:
-          label: "{{ calc.etr }} min review"
-          color: {{ 'E94637' if (calc.etr >= 20) else ('FBBD10' if (calc.etr >= 5) else '36A853') }}
+          label: "{{ calc.time }} min review"
+          color: {{ 'E94637' if (calc.time >= 20) else ('FBBD10' if (calc.time >= 5) else '36A853') }}
+
   # Post a comment that lists the best experts for the files that were modified.
   explain_code_experts:
     if:
@@ -22,6 +19,69 @@ automations:
       - action: explain-code-experts@v1 
         args:
           gt: 10 
-# The next function calculates the estimated time to review and makes it available in the automation above.
+
+  # Automatically approves PR containing only changes to docs, tests or code formatting
+  safe_changes:
+    if:
+      - {{ is.docs or is.tests or is.asset or is.formatting }}
+    run: 
+      - action: add-label@v1
+        args:
+          label: 'safe-changes'
+      - action: approve@v1
+
+  # Add a label if a PR is missing a Jira ticket mentioned in its title or linked in the description
+  label_missing_jira_info:
+    if:
+      - {{ not (has.jira_ticket_in_title or has.jira_ticket_in_desc) }}
+    run:
+      - action: add-label@v1
+        args:
+          label: "missing-jira"
+          color: 'F6443B'
+
+  # Add a label if the PR does not hae tests.
+  label_prs_without_tests:
+    if:
+      - {{ files | match(regex=r/[^a-zA-Z0-9](spec|test|tests)[^a-zA-Z0-9]/) | nope }}
+    run: 
+      - action: add-label@v1
+        args:
+          label: 'missing-tests'
+          color: '#E94637'
+
+  # Calculate the percentage of new code.
+  percent_new_code:
+    if:
+      - true
+    run: 
+      - action: add-comment@v1
+        args:
+          comment: |
+            This PR is {{ changes.ratio }}% new code.
+
+# Function calculating the estimated time to review.
 calc:
-  etr: {{ branch | estimatedReviewTime }}
+  time: {{ branch | estimatedReviewTime }}
+
+# Function filtering safe areas for changes.
+is:
+  docs: {{ files | allDocs }}
+  tests: {{ files | allTests }}
+  asset: {{ files | match(regex=r/\.(png|svg|gif|css)$/) | every }}
+  formatting: {{ source.diff.files | isFormattingChange }}
+
+# Function checking for Jira tickets.
+has:
+  jira_ticket_in_title: {{ pr.title | includes(regex=r/\b[A-Za-z]+-\d+\b/) }}
+  jira_ticket_in_desc: {{ pr.description | includes(regex=r/atlassian.net\/browse\/\w{1,}-\d{3,4}/) }}
+
+# Function checking code changes.
+changes:
+  # Sum all the lines added/edited in the PR
+  additions: {{ branch.diff.files_metadata | map(attr='additions') | sum }}
+  # Sum all the line removed in the PR
+  deletions: {{ branch.diff.files_metadata | map(attr='deletions') | sum }}
+  # Calculate the ratio of new code
+  ratio: {{ (changes.additions / (changes.additions + changes.deletions)) * 100 | round(2) }}
+  
